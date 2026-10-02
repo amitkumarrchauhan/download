@@ -89,3 +89,4 @@ while :; do
   git push -q origin main
   log "Pushed. $(remaining) file(s) left."
 done
+
