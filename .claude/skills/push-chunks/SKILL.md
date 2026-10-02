@@ -1,15 +1,15 @@
 ---
 name: push-chunks
-description: Move x* chunk files one at a time from the parent directory into this repo, one commit per file with the next numeric message (5, 6, ...), and push to origin main in batches of 5 after confirmation, until none remain. Use when the user asks to push/upload the remaining chunks or x files.
+description: Move x* chunk files one at a time from the parent directory into this repo, 5 files per commit with the next numeric message, pushing each commit to origin main after confirmation, until none remain. Use when the user asks to push/upload the remaining chunks or x files.
 ---
 
 # Push chunks
 
-The script `.claude/skills/push-chunks/push-chunks.sh` moves the first
-`x*` file (sorted) from the repo's parent directory into the repo, runs
-`git add .` and `git commit -m '<N>'` (N = last commit message + 1), and
-repeats until a batch of 5 unpushed commits is ready. Unpushed commits
-left over from an earlier run count toward the batch.
+The script `.claude/skills/push-chunks/push-chunks.sh` moves the next 5
+`x*` files (sorted) from the repo's parent directory into the repo, runs
+`git add .` and `git commit -m '<N>'` (N = last commit message + 1) as a
+single commit, then pushes it before starting the next batch. Unpushed
+commits left over from an earlier run are pushed first as their own batch.
 
 Before starting, check that no run is already going
 (`pgrep -f push-chunks.sh`); two runs at once would race on the same files.
@@ -30,7 +30,9 @@ Before starting, check that no run is already going
      ```
    - **Don't push** — stop; the prepared commits stay local and are pushed
      by the next run.
-3. If the script prints "Done", report that everything is pushed.
+3. With "Push all remaining" the script loops: commit 5 files, push,
+   commit the next 5, push, ... until no files remain.
+4. If the script prints "Done", report that everything is pushed.
 
 If any step fails, report the error output to the user rather than
 retrying blindly.

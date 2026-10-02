@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Move x* chunk files one at a time from the parent dir into the repo,
-# one commit per file with an incrementing numeric message, and push
-# them to origin main in batches.
+# Move x* chunk files from the parent dir into the repo in batches:
+# each batch of N files is one commit with an incrementing numeric
+# message, pushed to origin main before the next batch starts.
 #
 # Usage: push-chunks.sh [--batch N] [--prepare-only] [--yes] [repo]
-#   --batch N       commits per push (default 5)
+#   --batch N       files per commit/push (default 5)
 #   --prepare-only  prepare one batch, list it, and exit without pushing
 #   --yes           push every batch without asking until no files remain
 # With neither flag it asks on the terminal before each push.
+# Re-run under bash if started as `sh push-chunks.sh`: sh can't parse >(...).
+if [ -z "${BASH_VERSION:-}" ] || shopt -oq posix; then exec bash "$0" "$@"; fi
+
 set -euo pipefail
 
 BATCH=5; MODE=ask; REPO=""
@@ -31,19 +34,21 @@ log() { echo "[$(date '+%H:%M:%S')] $*"; }
 remaining() { find "$SRC" -maxdepth 1 -type f -name 'x*' | wc -l | tr -d ' '; }
 pending() { git rev-list --count origin/main..HEAD; }
 
-commit_next() {
-  local file last next
-  file="$(find "$SRC" -maxdepth 1 -type f -name 'x*' -exec basename {} \; | sort | head -n 1)"
+commit_batch() {
+  local last next files
   last="$(git log -1 --format=%s)"
   if ! [[ "$last" =~ ^[0-9]+$ ]]; then
     log "Last commit message '$last' is not a number; stopping."
     exit 1
   fi
   next=$((last + 1))
-  mv "$SRC/$file" "$REPO/$file"
+  files="$(find "$SRC" -maxdepth 1 -type f -name 'x*' -exec basename {} \; | sort | head -n "$BATCH")"
+  for f in $files; do
+    mv "$SRC/$f" "$REPO/$f"
+  done
   git add .
   git commit -q -m "$next"
-  log "Committed $file as $next"
+  log "Committed $(echo $files) as $next"
 }
 
 if [ "$MODE" = ask ] && ! { exec 3</dev/tty; } 2>/dev/null; then
@@ -53,15 +58,15 @@ fi
 
 log "Started in $REPO (batch $BATCH, mode $MODE, log: $LOG)"
 while :; do
-  # Unpushed commits from an earlier run count toward the batch.
-  while [ "$(pending)" -lt "$BATCH" ] && [ "$(remaining)" -gt 0 ]; do
-    commit_next
-  done
-
+  # Unpushed commits from an earlier run are pushed first as their own batch.
   n="$(pending)"
   if [ "$n" -eq 0 ]; then
-    log "Done: no more x* files in $SRC and nothing left to push"
-    break
+    if [ "$(remaining)" -eq 0 ]; then
+      log "Done: no more x* files in $SRC and nothing left to push"
+      break
+    fi
+    commit_batch
+    n="$(pending)"
   fi
 
   log "Batch ready: $n unpushed commit(s), $(remaining) file(s) still waiting"
@@ -72,7 +77,7 @@ while :; do
       log "Prepared only; not pushing."
       exit 0 ;;
     ask)
-      read -r -p "Push this batch? [y]es / [a]ll remaining without asking / [n]o: " ans <&3
+      read -r -p "Push this batch? [y]es / [a]ll remaining batches without asking / [n]o: " ans <&3
       case "$ans" in
         y|Y) ;;
         a|A) MODE=all ;;
