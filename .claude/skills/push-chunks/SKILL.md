@@ -1,36 +1,49 @@
 ---
 name: push-chunks
-description: Move x* chunk files one at a time from the parent directory into this repo, committing each with the next numeric message (5, 6, ...) and pushing to origin main, until none remain. Use when the user asks to push/upload the remaining chunks or x files.
+description: Move x* chunk files one at a time from the parent directory into this repo, one commit per file with the next numeric message (5, 6, ...), and push to origin main in batches of 5 after confirmation, until none remain. Use when the user asks to push/upload the remaining chunks or x files.
 ---
 
 # Push chunks
 
-Run the bundled script in the background (it can take a long time — one push per ~20MB file):
+The script `.claude/skills/push-chunks/push-chunks.sh` moves the first
+`x*` file (sorted) from the repo's parent directory into the repo, runs
+`git add .` and `git commit -m '<N>'` (N = last commit message + 1), and
+repeats until a batch of 5 unpushed commits is ready. Unpushed commits
+left over from an earlier run count toward the batch.
 
-```bash
-.claude/skills/push-chunks/push-chunks.sh
-```
+Before starting, check that no run is already going
+(`pgrep -f push-chunks.sh`); two runs at once would race on the same files.
 
-For each iteration the script:
-1. Picks the first `x*` file (sorted) in the repo's parent directory.
-2. Moves it into the repo directory.
-3. Runs `git add .`
-4. Runs `git commit -m '<N>'` where N = last commit message + 1.
-5. Runs `git push origin main`.
+## Steps
 
-It stops when no `x*` files remain in the parent, or on the first error
-(e.g. push failure).
+1. Prepare one batch (foreground, quick — no network):
+   ```bash
+   .claude/skills/push-chunks/push-chunks.sh --prepare-only
+   ```
+2. Show the user the batch it listed (commit numbers and files) and ask
+   with AskUserQuestion:
+   - **Push this batch** — run `git push origin main`, then go back to step 1
+     and ask again for the next batch.
+   - **Push all remaining** — run in the background without further prompts:
+     ```bash
+     .claude/skills/push-chunks/push-chunks.sh --yes
+     ```
+   - **Don't push** — stop; the prepared commits stay local and are pushed
+     by the next run.
+3. If the script prints "Done", report that everything is pushed.
 
-Progress is printed to the console and appended to `push-chunks.log` in
-the repo's parent directory (outside the repo, so it is never committed).
-Tell the user they can watch it live in a terminal with:
+If any step fails, report the error output to the user rather than
+retrying blindly.
+
+## Watching progress
+
+Everything is printed and also appended to `push-chunks.log` in the
+repo's parent directory (outside the repo, so never committed). Tell the
+user they can follow it live with:
 
 ```bash
 tail -f ../push-chunks.log
 ```
 
-Before starting, check that another run isn't already going
-(`pgrep -f push-chunks.sh`); two runs at once would race on the same files. The script is safe to re-run: it resumes from
-whatever is left. If it fails, report the error output to the user
-rather than retrying blindly — a moved-but-unpushed file will be picked
-up by the next commit/push on re-run.
+Run directly in a terminal with no flags, the script asks
+`[y]es / [a]ll / [n]o` before each push itself.
