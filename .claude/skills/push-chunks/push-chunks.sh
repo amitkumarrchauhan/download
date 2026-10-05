@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Move x* chunk files from the parent dir into the repo in batches:
-# each batch of N files is one commit with an incrementing numeric
-# message, pushed to origin main before the next batch starts.
+# Commit chunk files matching $PATTERN in batches: each batch of N files
+# is one commit with an incrementing numeric message, pushed to
+# origin $BRANCH before the next batch starts. Chunks are taken from the
+# repo's parent dir (moved in) and from untracked files in the repo root.
 #
 # Usage: push-chunks.sh [--batch N] [--prepare-only] [--yes] [repo]
 #   --batch N       files per commit/push (default 5)
@@ -12,6 +13,10 @@
 if [ -z "${BASH_VERSION:-}" ] || shopt -oq posix; then exec bash "$0" "$@"; fi
 
 set -euo pipefail
+
+# Override from the environment, e.g. BRANCH=main PATTERN='x*' push-chunks.sh
+BRANCH="${BRANCH:-qwen3.8-27B-GGUF}"
+PATTERN="${PATTERN:-x_qwen_*}"
 
 BATCH=5; MODE=ask; REPO=""
 while [ $# -gt 0 ]; do
@@ -31,8 +36,15 @@ cd "$REPO"
 exec > >(tee -a "$LOG") 2>&1
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
-remaining() { find "$SRC" -maxdepth 1 -type f -name 'x*' | wc -l | tr -d ' '; }
-pending() { git rev-list --count origin/main..HEAD; }
+# Chunk names still to commit: in the parent dir, or untracked in the repo root.
+chunks() {
+  {
+    find "$SRC" -maxdepth 1 -type f -name "$PATTERN" -exec basename {} \;
+    git ls-files --others --exclude-standard -- "$PATTERN" | { grep -v / || true; }
+  } | sort -u
+}
+remaining() { chunks | grep -c . || true; }
+pending() { git rev-list --count "origin/$BRANCH..HEAD"; }
 
 commit_batch() {
   local last next files
@@ -42,11 +54,12 @@ commit_batch() {
     exit 1
   fi
   next=$((last + 1))
-  files="$(find "$SRC" -maxdepth 1 -type f -name 'x*' -exec basename {} \; | sort | head -n "$BATCH")"
+  files="$(chunks | head -n "$BATCH")"
   for f in $files; do
-    mv "$SRC/$f" "$REPO/$f"
+    [ -e "$REPO/$f" ] || mv "$SRC/$f" "$REPO/$f"
   done
-  git add .
+  # Add only this batch, so other untracked chunks stay out of the commit.
+  git add -- $files
   git commit -q -m "$next"
   log "Committed $(echo $files) as $next"
 }
@@ -56,13 +69,13 @@ if [ "$MODE" = ask ] && ! { exec 3</dev/tty; } 2>/dev/null; then
   exit 1
 fi
 
-log "Started in $REPO (batch $BATCH, mode $MODE, log: $LOG)"
+log "Started in $REPO (branch $BRANCH, pattern $PATTERN, batch $BATCH, mode $MODE, log: $LOG)"
 while :; do
   # Unpushed commits from an earlier run are pushed first as their own batch.
   n="$(pending)"
   if [ "$n" -eq 0 ]; then
     if [ "$(remaining)" -eq 0 ]; then
-      log "Done: no more x* files in $SRC and nothing left to push"
+      log "Done: no more $PATTERN files and nothing left to push"
       break
     fi
     commit_batch
@@ -70,7 +83,7 @@ while :; do
   fi
 
   log "Batch ready: $n unpushed commit(s), $(remaining) file(s) still waiting"
-  git log --reverse --format='  commit %s:' --name-only origin/main..HEAD | grep -v '^$'
+  git log --reverse --format='  commit %s:' --name-only "origin/$BRANCH..HEAD" | grep -v '^$'
 
   case "$MODE" in
     prepare)
@@ -86,7 +99,7 @@ while :; do
   esac
 
   log "Pushing $n commit(s)..."
-  git push -q origin main
+  git push -q origin "$BRANCH"
   log "Pushed. $(remaining) file(s) left."
 done
 
